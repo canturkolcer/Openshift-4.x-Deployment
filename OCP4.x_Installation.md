@@ -9,6 +9,8 @@
   - [Create Ignition Files](#create-ignition-files)
   - [Start Installation](#start-installation)
   - [Monitor installation](#monitor-installation)
+  - [Remove Bootstrap Server](#remove-bootstrap-server)
+  - [Accessing to WEB UI](#accessing-to-web-ui)
 
 ## Introduction
 Installing OpenShift (OCP) 4.x on an online environment with proxy access.
@@ -170,6 +172,7 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   /etc/bind/db.<OCPDomainPrefix>.<BaseDomain>
   * Please replace the values between < and > .
   * DO NOT remove any leading or following "."
+  * Create /etc/bind folder if missing. It should have execute rigths for others (755 can be used).
   ```
   $TTL    604800
   @       IN      SOA     <OCPDomainPrefix>.<BaseDomain>. root.<OCPDomainPrefix>.<BaseDomain>. (
@@ -538,6 +541,7 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
 
 
   ```
+
 2. Run openshift-installer to do validation on install-config.yaml file.
 
   ```
@@ -562,10 +566,21 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   ***Important Note: Please Remember ignition files are valid for 24 hours. You need to recreate if you want to use them after 24 hours***
 
 6. Start HTTP server for sharing ignition files and RAW disk file.
+   
+  ##Using python2.x module:
+    
   ```
   # cd /ocp_depot
   # python -m SimpleHTTPServer
   ```
+  
+  ##Using python3.x module:
+    
+  ```
+  # cd /ocp_depot
+  # python3 -m http.server
+  ```
+    
 
 ## Start Installation
 1. Prepare virtual server without any operating system. And assign cpu, memory, disk and network cards on them.
@@ -573,11 +588,12 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   | Server Role | CPU | RAM | OS Space | Application Space | Count |
   | ----------- | --- | --- | -------- | ----------------- | ----- |
   | bootstrap   | 16  | 32  |  100 GB  |         -         |   1   |  
-  | master node | 12  | 64  |  100 GB  |       150 GB      |   3   |
-  | worker node | 16  | 32  |  100 GB  |       150 GB      |   5   |
+  | master node | 12  | 64  |  100 GB  |         -         |   3   |
+  | worker node | 16  | 32  |  100 GB  |         -         |   5   |
 
-2. Mount ISO image as a CD drive to all 9 servers.
-3. Boot servers and on boot screen press **TAB** and enter network configuration as boot variables. Hit enter to start live image. For Worker nodes, it is better to wait until all masters are ready.
+2. Check all Red Hat CoreOS IP's are not in use. Installation will fail in case of IP duplication.
+3. Mount ISO image as a CD drive to all 9 servers.
+4. Boot servers and on boot screen press **TAB** and enter network configuration as boot variables. Hit enter to start live image. For Worker nodes, it is better to wait until all masters are ready.
 
   ***Important! All parameters should have in one line***
 
@@ -585,29 +601,30 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   ip=<IPAddress>::<DefaultGatewayAddress>:<SUBNET Mask>:<hostname>.<OCPDomain>.<BaseDomain>:<Network Interface>:none nameserver=<DNS Server IP>
   ```
 
-4. After RHCOS Live OS started, run installation with parameters
+5. After RHCOS Live OS started, run installation with parameters
 
   **BootStrap Server**
   ```
-  sudo coreos-installer install --igniton-url http://<Installation Server IP>/bootstrap.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/bootstrap.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
   ```
   **Master Server**
   ```
-  sudo coreos-installer install --igniton-url http://<Installation Server IP>/master.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/master.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
   ```
   **Worker Server**
   ```
-  sudo coreos-installer install --igniton-url http://<Installation Server IP>/worker.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/worker.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
   ```
 
-5. After setup is completed; shut down server, detach ISO and restart.
+6. After setup is completed; shut down server, detach ISO and restart.
    
 ## Monitor installation
 
 1. Openshift installer on isntallation server can be used till bootstrapping is completed.
   ```
   openshift-install --dir=/ocp_depot wait-for bootstrap-complete --log-level=debug
-  ``` ip=
+  ``` 
+    
 2. On bootstrap server, Folowing command can be run to track installation and error. Please be aware, some error can be seen until master nodes are up.
   ```
   journalctl -b -f -u bootkube.service
@@ -616,7 +633,7 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
 
 3. During the installation i also recommend to run following command to see how the cluster looks like at that moment.
   ```
-  export KUBECONFNIG=./auth/kubeconfig
+  export KUBECONFIG=./auth/kubeconfig
   watch -n5 'oc get clusteroperators ; oc get nodes ; oc get clusterversion'
   ```
 
@@ -653,7 +670,7 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   
 ## Remove Bootstrap Server
 
-1. Edit haproxy configuration (/etc/haproxy/haproxy.cfg) on master node's load balancer and comment out or delete bootstrap entries .
+1. Edit haproxy configuration (/etc/haproxy/haproxy.cfg) on master node's load balancer and comment out or delete bootstrap entries.
   ```
   backend machine-config-server
     balance source
@@ -677,8 +694,11 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
     server master2 <master2 IP Address>:6443 check
     server master3 <master3 IP Address>:6443 check  
   ```
-
-2. Check if everything works fine or not. I recommend to keep bootstrap running for at least 24 hours -till the certificates renewed- if you do not need the resources.
+2. Restart haproxy service
+   ```
+   # systemctl restart haproxy
+   ```
+3. Check if everything works fine or not. I recommend to keep bootstrap running for at least 24 hours -till the certificates renewed- if you do not need the resources.
 
 ## Accessing to WEB UI
 
