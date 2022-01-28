@@ -11,6 +11,7 @@
   - [Monitor installation](#monitor-installation)
   - [Remove Bootstrap Server](#remove-bootstrap-server)
   - [Accessing to WEB UI](#accessing-to-web-ui)
+  - [LDAP configuration](#ldap-configuration)
 
 ## Introduction
 Installing OpenShift (OCP) 4.x on an online environment with proxy access.
@@ -719,6 +720,164 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
 
 3. You can access now with using *kubeadmin* user. Password can be found on installation server at "/ocp_depot/auth/kubeadmin-password"
 
+## LDAP configuration
+
+1. Configure OAuth in OCP webui.
+
+     - Navigate to Administration -> Cluster settings -> Global configuration -> OAuth
+
+     - In identity providers section click Add and select LDAP. Fill out the form according to your environment.
+
+       <br>**Name** - any name for the OAuth
+       <br>**URL** - the url to the domain controller for example: ldaps://FQDN_of_the_domain_controller/DC=example,DC=com?sAMAccountName?sub
+       <br>**Bind DN** - username which will be used to do LDAP queries
+       <br>**Bind Password** - password for the user
+       <br>**ID** - ID going to be gathered from LDAP
+       <br>**Preferred Username** - Username going to be gathered from LDAP
+       <br>**Name** - Display name going to be gathered from LDAP
+       <br>**Email** - email going to be gathered from LDAP
+       <br>**CA File** - Certificate of the domain controller *
+
+       *Because OCP does not allow not trusted connections it is requiererd to provide the certificate of the domain controller to which you will be connecting to trust the connection.
+
+     - After creating the OAuth, wait few minutes for the pods in openshift-authentication project to restart. After that on the OCP welcome page the LDAP login will be available.
+
+     - At the moment after login with LDAP account nothing will be available because the account is not assigned to any OCP group and does not have any permission assigned.
+
+2. Create dedicated project for groups syncronization and swtich to that project.
+    ```
+    oc new-project ldap-sync 
+    oc project ldap-sync
+    ```
+
+3. Define a service account yaml file (for example ldap-sync-service-account.yaml):
+    ```
+    kind: ServiceAccount
+    apiVersion: v1
+    metadata:
+      name: ldap-group-syncer
+      namespace: ldap-sync
+    ```
+4. Create the service account:
+    ```
+    oc create -f ldap-sync-service-account.yaml
+    ```
+
+5. Define a cluster role yaml file (for example ldap-sync-cluster-role.yaml):
+    ```
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: ldap-group-syncer
+    rules:
+      - apiGroups:
+          - ''
+          - user.openshift.io
+        resources:
+          - groups
+        verbs:
+          - get
+          - list
+          - create
+          - update
+    ```
+7. Create the cluster role:
+    ```
+    oc create -f ldap-sync-cluster-role.yaml
+    ```
+8. Define a cluster role binding to bind the cluster role to the service account with yaml file(for example ldap-sync-cluster-role-binding.yaml):
+    ```
+    kind: ClusterRoleBinding
+    apiVersion: rbac.authorization.k8s.io/v1
+    metadata:
+      name: ldap-group-syncer
+    subjects:
+      - kind: ServiceAccount
+        name: ldap-group-syncer
+        namespace: ldap-sync
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: ldap-group-syncer
+    ```
+9. Create the cluster role binding:
+    ```
+    oc create -f ldap-sync-cluster-role-binding.yaml
+    ```
+10. Create configuration file for LDAP syncronization with yaml file (for example ldap-sync.yaml) Here parameters defined at step 2 should be used.
+    ```
+    kind: LDAPSyncConfig
+    apiVersion: v1
+    url: <ldap://FQDN_of_the_domain_controller:389>
+    bindDN: <username which will be used to do LDAP queries>
+    bindPassword: <password for the user>
+    insecure: false
+    ca: /ldap-sync/AD.cer
+    groupUIDNameMapping:
+      <"CN=GROUP_NAME,OU=TEST,OU=TEST2,DC=EXAMPLE,DC=COM": group_name_in_OCP to which you want to map the LDAP group>
+    activeDirectory:
+        usersQuery:
+            baseDN: <"DC=EXAMPLE,DC=COM">
+            derefAliases: never
+            filter: (objectClass=person)
+            scope: sub
+            pageSize: 0
+        userNameAttributes: [ <Preferred Username> ]
+        groupMembershipAttributes: [ memberOf ]
+    ```
+
+11. Create whitelist file for LDAP syncronization (for example whitelist.txt)
+    ```
+    CN=GROUP_NAME,OU=TEST,OU=TEST2,DC=EXAMPLE,DC=COM
+    ```
+12. Prepare the certificate of the domain controller (the same used in first step, it should be named the sawy like it is mentioned in configuration file for LDAP syncronization).
+
+11. Create a secret with all the files for the group syncronization
+    ```
+    oc create secret generic ldap-sync --from-file=ldap-sync.yaml=ldap-sync.yaml  --from-file=whitelist.txt=whitelist.txt  --from-file=AD.cer
+    ```
+13. Define a cron job yaml file(for example ldap-sync-cron-job.yaml):
+    ```
+    apiVersion: batch/v1beta1
+    kind: CronJob
+    metadata:
+      name: ldap-group-syncer
+      namespace: ldap-sync
+    spec:
+      schedule: "0 7,19 * * *"
+      suspend: false
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              serviceAccountName: ldap-group-syncer
+              restartPolicy: Never
+              containers:
+                - name: oc-cli
+                  command:
+                    - /bin/oc
+                    - adm
+                    - groups
+                    - sync
+                    - --whitelist=/ldap-sync/whitelist.txt
+                    - --sync-config=/ldap-sync/ldap-sync.yaml
+                    - --confirm
+                  image: registry.redhat.io/openshift4/ose-cli
+                  imagePullPolicy: Always
+                  volumeMounts:
+                  - mountPath: /ldap-sync/
+                    name: config
+                    readOnly: true
+              volumes:
+              - name: config
+                secret:
+                  defaultMode: 420
+                  secretName: ldap-sync
+    ```
+14. Create the cron job.
+    ```
+    oc create -f ldap-sync-cron-job.yaml
+    ```
+15. Check the pod creation according to the schedule in configuration of the cron job to verify if the syncronization is working.
+
 ----
-
-
