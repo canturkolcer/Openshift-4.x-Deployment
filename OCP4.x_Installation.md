@@ -616,7 +616,22 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   ```
   sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/worker.ign --insecure-ignition  --copy-network --image-url http://<Installation Server IP>:8000/<RAW image name> --insecure /dev/sda
   ```
+  **Get Command from a File**
+  - Create files on http server with command realted with each type of node (bootstrap/master/worker)
+  ```
+  # cat bootcmd 
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/bootstrap.ign --insecure-ignition  --copy-network --image-url http://10.17.65.249:8000/rhcos_latest.raw.gz --insecure /dev/sda
+ 
+  # cat mastercmd
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/master.ign --insecure-ignition  --copy-network --image-url http://10.17.65.249:8000/rhcos_latest.raw.gz --insecure /dev/sda
 
+  # cat workercmd
+  sudo coreos-installer install --ignition-url http://<Installation Server IP>:8000/worker.ign --insecure-ignition  --copy-network --image-url http://10.17.65.249:8000/rhcos_latest.raw.gz --insecure /dev/sda
+  ```
+  -  Use curl to run commands:
+  ```
+  curl http://<Installation Server IP>:8000/cmdfile | bash
+  ```
 6. After setup is completed; shut down server, detach ISO and restart.
    
 ## Monitor installation
