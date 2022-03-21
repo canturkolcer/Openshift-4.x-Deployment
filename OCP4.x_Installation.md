@@ -293,6 +293,10 @@ We did not use customer DNS because OCP got confuses when there are multiple ent
   forward only;
   forwarders { <Primary DNS server IP's to use for other DNS lookups> };
   ```
+  - Disable DNS Zone transfers
+  ```
+  allow-transfer {"none";};
+  ```  
   - Disable dnssec validation in case you do not have
   ```
         dnssec-enable no;
